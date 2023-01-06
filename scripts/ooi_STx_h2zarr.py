@@ -8,32 +8,23 @@ import os
 import h5py
 from tqdm import tqdm
 
-from dask.distributed import Client
+file_dir = '/das_data2/h5files/'
+file_list = os.listdir(file_dir)
 
-#client = Client()
-#print(client)
+# remove .aria2 files (only for debugging during transfer)
+valid_idx = []
+for k, file in enumerate(file_list):
+    if file[-2] != 'a':
+        valid_idx.append(k)
+        
+file_list = [file_list[i] for i in valid_idx]
+file_list.sort()
 
-# setup access to Azure Storage
-storage_options = {'account_name':'dasdata', 'account_key':os.environ['AZURE_KEY_dasdata']}
+files = [file_dir+file for file in file_list]
 
+first_loop=True
 
-baseurl = url = 'http://piweb.ooirsn.uw.edu/das/data/Optasense/SouthCable/TransmitFiber/South-C1-LR-95km-P1kHz-GL50m-SP2m-FS200Hz_2021-11-01T16_09_15-0700/'
-
-with open('file_list.txt') as f:
-    fs = f.readlines()
-    
-files = []
-
-for f in fs:
-    files.append(f[:-1])
-
-first_loop = True
-
-for file in tqdm(files, position=0, leave=True):
-    print('download file...', end="\r")
-    os.system(f'aria2c -q {baseurl + file}')
-    
-    print('read data into memory and construct xr.Dataset ...', end="\r")
+for file in tqdm(files):
     hf = h5py.File(file)
     
     ds = xr.Dataset({
@@ -45,13 +36,11 @@ for file in tqdm(files, position=0, leave=True):
         'SampleCount':('time', hf['Acquisition']['Raw[0]']['Custom']['SampleCount'])}
     )
     
-    print('write to zarr...                                                        ', end="\r")
-    # create new zarr store if beginning of loop otherwize, append in time dimension
-    # if first_loop:
-    #    first_loop = False
-    #    ds.to_zarr('abfs://zarr/SouthCable_Tx.zarr', storage_options=storage_options, mode='w-')
-    #else:
-    ds.to_zarr('abfs://zarr/SouthCable_Tx.zarr', storage_options=storage_options, append_dim='time')
+    ds = ds.chunk({'time':3000, 'distance':3000})
     
-    # delete downloaded file
-    os.system(f'rm {file}')
+    # create new zarr store if beginning of loop otherwize, append in time dimension
+    if first_loop:
+        first_loop = False
+        ds.to_zarr(f'/das_data2/SouthCable_Tx_{files[0][-21:-4]}{files[-1][-21:-4]}', mode='w-')
+    else:
+        ds.to_zarr(f'/das_data2/SouthCable_Tx_{files[0][-21:-4]}{files[-1][-21:-4]}', append_dim='time')
